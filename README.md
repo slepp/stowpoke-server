@@ -1,7 +1,7 @@
 # Stowpoke server
 
 Run your own [Stowpoke](https://stowpoke.com): the inventory engine and web app behind one access token, in one SQLite
-file on your machine. No account, no subscription, no one else's cloud. **v0.1 beta.**
+file on a machine you control or rent. No Stowpoke account, no subscription, and your data stays yours. **v0.1 beta.**
 
 This repository is the home of the published image: the user guide, `compose.yaml`, `kubernetes.yaml` and the Render
 and Fly.io templates. The server's source is not published yet.
