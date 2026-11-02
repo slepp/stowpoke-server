@@ -3,12 +3,13 @@
 Run your own [Stowpoke](https://stowpoke.com): the inventory engine and web app behind one access token, in one SQLite
 file on your machine. No account, no subscription, no one else's cloud. **v0.1 beta.**
 
-This repository is the home of the published image: the user guide, `compose.yaml` and `kubernetes.yaml`. The
-server's source is not published yet.
+This repository is the home of the published image: the user guide, `compose.yaml`, `kubernetes.yaml` and the Render
+and Fly.io templates. The server's source is not published yet.
 
 ## What you need
 
-- Docker, on `linux/amd64` or `linux/arm64` (a NAS, a small server, a Raspberry Pi 4/5 with a 64-bit OS).
+- Docker, on `linux/amd64` or `linux/arm64` (a NAS, a small server, a Raspberry Pi 4/5 with a 64-bit OS). Render and
+  Fly.io build from the published image, so they do not need Docker on your machine; see [Managed hosting](#managed-hosting).
 - A folder or volume to keep the inventory in. Everything lives in `/data`.
 - A token: a long secret you choose. It is the password to the inventory, shared by every phone and browser you
   trust.
@@ -84,10 +85,115 @@ kubectl create secret generic stowpoke --from-literal=token="$(openssl rand -bas
 kubectl apply -f kubernetes.yaml
 ```
 
-[kubernetes.yaml](kubernetes.yaml) creates a single-replica Deployment (`Recreate`, one copy per volume), a 1 Gi
-PersistentVolumeClaim and a Service on port 80 → 8787. Expose it over HTTPS with your usual Ingress or Gateway.
-Set the token in the Secret first; the manifest reads `stowpoke`/`token`. The pod runs with `fsGroup: 1000` so the
-`/data` volume is writable.
+[kubernetes.yaml](kubernetes.yaml) is one Deployment (one replica, `Recreate`), a 1 Gi `ReadWriteOnce`
+PersistentVolumeClaim and a ClusterIP Service on port 80 → 8787. The pod runs as uid/gid 1000, with a read-only
+root filesystem (only `/data` and an in-memory `/tmp` are writable), no service-account token and all capabilities
+dropped. The token is read from the `stowpoke`/`token` Secret, so create that first.
+
+Expose the Service over HTTPS with your Ingress or Gateway. With nginx and cert-manager:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stowpoke
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/proxy-body-size: 16m       # imports can be up to 16 MB
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600" # /api/live is a long-lived WebSocket
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [stowpoke.example.com]
+      secretName: stowpoke-tls
+  rules:
+    - host: stowpoke.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: stowpoke
+                port:
+                  name: http
+```
+
+Any controller that forwards WebSocket upgrades works. If yours does not, `/api/live` fails but the rest of the app
+still works. Use the `https://` host in the app.
+
+To update, set a new tag and watch the rollout. `Recreate` stops the old pod first, so two pods never share the
+volume:
+
+```sh
+kubectl set image deploy/stowpoke stowpoke=ghcr.io/slepp/stowpoke-server:sha-617a301
+kubectl rollout status deploy/stowpoke
+```
+
+To change the token, update the Secret and restart:
+
+```sh
+kubectl create secret generic stowpoke --from-literal=token="$(openssl rand -base64 32)" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl rollout restart deploy/stowpoke
+```
+
+Keep `replicas: 1` and `ReadWriteOnce`: SQLite needs a single writer. **Settings → Export** is the easy backup. For a
+file copy, scale the Deployment to zero, copy `/data` from a temporary pod that mounts the claim, then scale back to
+one; or take a CSI `VolumeSnapshot`.
+
+## Managed hosting
+
+Both options run the same image with the inventory on a persistent disk. You pay the host directly and there is no
+Stowpoke account; the address, token and data are yours.
+
+### Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/slepp/stowpoke-server)
+
+The button reads [render.yaml](render.yaml): one web service, a 1 GB disk at `/data`, and a generated `API_TOKEN`
+that Render shows under **Environment** after the first deploy. Render's free plan has no persistent disk, so the
+blueprint asks for the Starter plan (0.5 CPU, 512 MB), which Render bills together with the disk. It deploys to
+Render's `oregon` region; to use another one, change `region` in `render.yaml` in a fork before clicking the button.
+
+Render gives the service an `https://` address. To use your own domain, add it in the service's **Settings** and
+point a CNAME at Render.
+
+Render does not redeploy when `latest` changes. To update, open the service and use **Manual Deploy → Deploy latest
+image**. To pin a version, change `image.url` in `render.yaml` to a `sha-<short>` tag and deploy again.
+
+### Fly.io
+
+Fly has no one-click URL, but a few commands from this repository are close:
+
+```sh
+git clone https://github.com/slepp/stowpoke-server
+cd stowpoke-server
+fly launch --copy-config --no-deploy --generate-name
+fly secrets set API_TOKEN="$(openssl rand -base64 32)"
+fly deploy
+```
+
+[fly.toml](fly.toml) runs one machine with a 1 GB volume at `/data`, forces HTTPS, and keeps the machine running
+(`auto_stop_machines = "off"`; a stopped machine is a stopped inventory). Change `primary_region` before launching
+if `yyz` is not near you. `fly launch` and `fly deploy` create the volume from the file; check it with
+`fly volumes list`, and create it by hand if it is missing:
+
+```sh
+fly volumes create stowpoke_data --size 1 --region yyz
+fly volumes snapshots create <volume-id>   # a point-in-time copy
+```
+
+`fly apps open` opens the address. To update, run `fly deploy` again, or pin a `sha-<short>` tag in `fly.toml` first.
+`fly logs` follows the server log; `fly ssh console` gets a shell in the machine.
+
+### Cloudflare Containers
+
+Not a fit. A Container's disk is ephemeral: it is reset from the image whenever the instance sleeps, and this server
+keeps everything in one SQLite file. Mounting R2 over FUSE is object storage rather than a local filesystem, and
+SQLite needs real locking and durability. Containers also expect a Worker to own the lifecycle, so this image is not
+a drop-in.
 
 ## Reach it away from home
 
@@ -215,8 +321,9 @@ The T-Embed reader **is** supported: set it up from the app or with the address 
 
 - Guide, with the same steps and a FAQ: <https://stowpoke.com/self-host>
 - Email: <support@stowpoke.com>
-- This repository: guide, [compose.yaml](compose.yaml) and [kubernetes.yaml](kubernetes.yaml). The image is built
-  from the private Stowpoke product repository; its source is not published yet.
+- This repository: guide, [compose.yaml](compose.yaml), [kubernetes.yaml](kubernetes.yaml), [render.yaml](render.yaml)
+  and [fly.toml](fly.toml). The image is built from the private Stowpoke product repository; its source is not
+  published yet.
 
 ## Security
 

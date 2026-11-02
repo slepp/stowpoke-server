@@ -1,0 +1,26 @@
+# One-click deploy: https://render.com/deploy?repo=https://github.com/slepp/stowpoke-server
+#
+# Render's free plan has no persistent disk, so this asks for the Starter plan
+# (0.5 CPU, 512 MB) plus a 1 GB disk. The service deploys to oregon; to use
+# another region (ohio, virginia, frankfurt, singapore), fork this repository
+# and change the region before clicking the Deploy to Render button.
+#
+# To update, use Manual Deploy -> Deploy latest image, or pin a sha-<short> tag
+# in image.url below and deploy that.
+services:
+  - type: web
+    name: stowpoke
+    runtime: image
+    plan: 0.5c-512mb
+    region: oregon
+    image:
+      url: ghcr.io/slepp/stowpoke-server:latest
+    healthCheckPath: /api/health
+    numInstances: 1
+    envVars:
+      - key: API_TOKEN
+        generateValue: true
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1

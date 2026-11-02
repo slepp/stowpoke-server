@@ -1,0 +1,39 @@
+# Deploy from this repository:
+#   fly launch --copy-config --no-deploy --generate-name
+#   fly secrets set API_TOKEN="$(openssl rand -base64 32)"
+#   fly deploy
+#
+# Change primary_region to a region near you before launching; the volume is
+# created in the app's region. `fly platform regions` lists the codes.
+primary_region = "yyz"
+
+[build]
+  image = "ghcr.io/slepp/stowpoke-server:latest"
+
+[env]
+  PORT = "8787"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # The inventory is the running machine's disk. Do not stop it when idle.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[mounts]
+  source = "stowpoke_data"
+  destination = "/data"
+  # fly launch and fly deploy create the volume from this on first use.
+  initial_size = "1gb"
