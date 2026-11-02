@@ -1,0 +1,11 @@
+# docker compose up -d   (with STOWPOKE_TOKEN set, e.g. in a .env file next to this one)
+services:
+  stowpoke:
+    image: ghcr.io/slepp/stowpoke-server:latest
+    restart: unless-stopped
+    ports: ["8787:8787"]
+    environment:
+      API_TOKEN: ${STOWPOKE_TOKEN:?Set STOWPOKE_TOKEN to a long secret}
+    volumes: ["stowpoke:/data"]
+volumes:
+  stowpoke:

@@ -1,0 +1,41 @@
+# kubectl apply -f kubernetes.yaml
+# Put the token in the Secret first:  kubectl create secret generic stowpoke --from-literal=token="$(openssl rand -base64 32)"
+# Expose it over HTTPS with your usual Ingress or Gateway, pointing at the Service below.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: stowpoke }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # one copy per volume
+  selector: { matchLabels: { app: stowpoke } }
+  template:
+    metadata: { labels: { app: stowpoke } }
+    spec:
+      securityContext: { fsGroup: 1000 }
+      containers:
+        - name: stowpoke
+          image: ghcr.io/slepp/stowpoke-server:latest
+          ports: [{ containerPort: 8787 }]
+          env:
+            - name: API_TOKEN
+              valueFrom: { secretKeyRef: { name: stowpoke, key: token } }
+          volumeMounts: [{ name: data, mountPath: /data }]
+          readinessProbe: { httpGet: { path: /api/health, port: 8787 } }
+          livenessProbe: { httpGet: { path: /api/health, port: 8787 }, initialDelaySeconds: 10 }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: stowpoke-data }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: stowpoke-data }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: stowpoke }
+spec:
+  selector: { app: stowpoke }
+  ports: [{ port: 80, targetPort: 8787 }]
