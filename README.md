@@ -8,8 +8,8 @@ and Fly.io templates. The server's source is not published yet.
 
 ## What you need
 
-- Docker, on `linux/amd64` or `linux/arm64` (a NAS, a small server, a Raspberry Pi 4/5 with a 64-bit OS). Render and
-  Fly.io build from the published image, so they do not need Docker on your machine; see [Managed hosting](#managed-hosting).
+- Docker, on `linux/amd64` or `linux/arm64` (a NAS, a small server, a Raspberry Pi 4/5 with a 64-bit OS). A cloud host
+  can run the published image without Docker on your machine; see [Cloud hosting](#cloud-hosting).
 - A folder or volume to keep the inventory in. Everything lives in `/data`.
 - A token: a long secret you choose. It is the password to the inventory, shared by every phone and browser you
   trust.
@@ -143,10 +143,14 @@ Keep `replicas: 1` and `ReadWriteOnce`: SQLite needs a single writer. **Settings
 file copy, scale the Deployment to zero, copy `/data` from a temporary pod that mounts the claim, then scale back to
 one; or take a CSI `VolumeSnapshot`.
 
-## Managed hosting
+## Cloud hosting
 
-Both options run the same image with the inventory on a persistent disk. You pay the host directly and there is no
-Stowpoke account; the address, token and data are yours.
+You can run the image with a cloud host that supports containers, HTTPS and a persistent disk mounted at `/data`,
+writable by user 1000. Set `API_TOKEN` and run only one instance. You pay the host directly and manage the server
+yourself; there is no Stowpoke account.
+
+Render and Fly.io are examples, not a complete list. Check the host's pricing and terms before deploying. These example
+configurations have not yet been tested with a live deployment.
 
 ### Render
 
@@ -165,7 +169,7 @@ image**. To pin a version, change `image.url` in `render.yaml` to a `sha-<short>
 
 ### Fly.io
 
-Fly has no one-click URL, but a few commands from this repository are close:
+Deploy with these commands from this repository:
 
 ```sh
 git clone https://github.com/slepp/stowpoke-server
@@ -190,7 +194,7 @@ fly volumes snapshots create <volume-id>   # a point-in-time copy
 
 ### Cloudflare Containers
 
-Not a fit. A Container's disk is ephemeral: it is reset from the image whenever the instance sleeps, and this server
+The container's disk is ephemeral: it is reset from the image whenever the instance sleeps, and this server
 keeps everything in one SQLite file. Mounting R2 over FUSE is object storage rather than a local filesystem, and
 SQLite needs real locking and durability. Containers also expect a Worker to own the lifecycle, so this image is not
 a drop-in.
